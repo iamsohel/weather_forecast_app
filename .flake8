@@ -1,0 +1,14 @@
+[flake8]
+# https://flake8.pycqa.org/en/latest/user/error-codes.html
+# https://pycodestyle.pycqa.org/en/latest/intro.html#error-codes
+select =
+    F
+    E
+    W1 #Indentation warning
+    W2 #Whitespace warning
+    W6 #Deprecation warning
+    N8
+ignore = E800, F401
+max-line-length = 170
+max-complexity = 18
+exclude = .git,__pycache__,venv/,migrations/
