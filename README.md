@@ -38,17 +38,21 @@ follow the below steps
 
   `pip install -r requirements.txt`
 
-after running all the project's dependencies, now we have to run a command to run migration
+- after running all the project's dependencies, now we have to run a command to run migration
 
 `python manage.py migrate`
 
-after running all the migrations, seed all the district data from github link
+- after running all the migrations, seed all the district data from github link
 
 `python manage.py insert_districts`
 
-and finally run the below command to run the project
+- and finally run the below command to run the project
 
 `python manage.py runserver`
+
+- Run test
+
+`python manage.py pytest`
 
 ### Or Run with docker-compose
 
@@ -57,6 +61,10 @@ follow the below steps
 - run docker compose to up and running the application
 
   `docker-compose up`
+
+- Run test inside docker container
+
+  `docker-compose exec weather_api pytest`
 
 ### Sample output
 
