@@ -1,6 +1,7 @@
 FROM python:3.11-alpine
 
 ENV PYTHONUNBUFFERED=1
+ENV PATH="/app:${PATH}"
 WORKDIR /app
 
 # Install application dependencies
@@ -14,7 +15,6 @@ RUN apk add --update --no-cache --virtual .tmp-build-deps \
 RUN pip install -r /requirements.txt
 RUN apk del .tmp-build-deps
 
-# copy project
 COPY . .
 
 EXPOSE 8000
