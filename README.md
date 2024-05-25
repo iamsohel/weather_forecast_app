@@ -40,30 +40,34 @@ follow the below steps
 
 - create env file[copy .env.dev.example and make new file name .env.dev]
 
-after running all the project's dependencies, now we have to run a command to run migration
+- after running all the project's dependencies, now we have to run a command to run migration
 
-`python manage.py migrate`
+  `python manage.py migrate`
 
-after running all the migrations, seed all the district data from github link
+- after running all the migrations, seed all the district data from github link
 
-`python manage.py insert_districts`
+  `python manage.py insert_districts`
 
-and finally run the below command to run the project
+- finally run the below command to run the project
 
-`python manage.py runserver`
+  `python manage.py runserver`
 
-and finally run the below command to run the project
+- Run test
 
-`python manage.py runserver`
+  `python manage.py pytest`
 
 ### Or Run with docker-compose
 
 follow the below steps
 
-- create env file[copy .env.dev.example, .env.dev.db.example and make new file name .env.dev and .env.dev.db]
+- create env file [copy .env.dev.example, .env.dev.db.example and make new file name .env.dev and .env.dev.db]
 - run docker compose to up and running the application
 
   `docker-compose up`
+
+- Run test inside docker container
+
+  `docker-compose exec weather_api pytest`
 
 ### Sample output
 
