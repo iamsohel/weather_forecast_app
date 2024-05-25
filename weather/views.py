@@ -1,7 +1,10 @@
+import asyncio
 import logging
 from datetime import datetime, timedelta
 
-import requests
+import aiohttp
+from asgiref.sync import async_to_sync, sync_to_async
+from django.core.cache import cache
 from django.core.exceptions import ObjectDoesNotExist
 from rest_framework import status
 from rest_framework.decorators import api_view
@@ -14,7 +17,7 @@ logger = logging.getLogger(__name__)
 API_URL = "https://api.open-meteo.com/v1/forecast"
 
 
-def fetch_weather_forecast(lat, lon):
+async def fetch_weather_forecast(session, lat, lon):
     params = {
         "latitude": lat,
         "longitude": lon,
@@ -24,10 +27,10 @@ def fetch_weather_forecast(lat, lon):
         "end": (datetime.utcnow() + timedelta(days=7)).isoformat(),
     }
     try:
-        response = requests.get(API_URL, params=params)
-        response.raise_for_status()
-        return response.json()
-    except requests.RequestException as e:
+        async with session.get(API_URL, params=params) as response:
+            response.raise_for_status()
+            return await response.json()
+    except aiohttp.ClientError as e:
         logger.error(f"Failed to fetch weather data: {e}")
         raise
 
@@ -49,7 +52,6 @@ def get_daily_2PM_temps(weather_data):
         day.strftime("%a").lower(): daily_temps.get(day.strftime("%Y-%m-%d"))
         for day in next_7_days
     }
-
     return daily_2pm_temps
 
 
@@ -58,30 +60,45 @@ def calculate_average_temp(daily_temps):
     return sum(valid_temps) / len(valid_temps) if valid_temps else None
 
 
-@api_view(["GET"])
-def get_coolest_districts(request):
-    try:
-        districts = District.objects.all()
-        district_temps = []
+async def fetch_all_districts_weather_data(districts):
+    async with aiohttp.ClientSession() as session:
+        tasks = [
+            fetch_weather_forecast(session, district.lat, district.lon)
+            for district in districts
+        ]
+        return await asyncio.gather(*tasks)
 
-        for district in districts:
-            try:
-                weather_data = fetch_weather_forecast(district.lat, district.lon)
-                daily_temps = get_daily_2PM_temps(weather_data)
-                avg_temp = calculate_average_temp(daily_temps)
-                if avg_temp is not None:
-                    district_data = {"district": district.name}
-                    district_data.update(
-                        {
-                            day: f"{temp:.2f} °C"
-                            for day, temp in daily_temps.items()
-                            if temp is not None
-                        }
-                    )
-                    district_data["average_temp"] = avg_temp
-                    district_temps.append(district_data)
-            except Exception as ex:
-                logger.error(f"Failed to process district {district.name}: {ex}")
+
+@sync_to_async
+def get_districts():
+    return list(District.objects.all())
+
+
+async def get_coolest_districts_async():
+    try:
+        districts = await get_districts()
+
+        cached_data = cache.get("coolest_districts")
+        if cached_data:
+            return {"data": cached_data}
+
+        weather_data = await fetch_all_districts_weather_data(districts)
+
+        district_temps = []
+        for district, data in zip(districts, weather_data):
+            daily_temps = get_daily_2PM_temps(data)
+            avg_temp = calculate_average_temp(daily_temps)
+            if avg_temp is not None:
+                district_data = {"district": district.name}
+                district_data.update(
+                    {
+                        day: f"{temp:.2f} °C"
+                        for day, temp in daily_temps.items()
+                        if temp is not None
+                    }
+                )
+                district_data["average_temp"] = avg_temp
+                district_temps.append(district_data)
 
         district_temps.sort(key=lambda x: x["average_temp"])
         coolest_districts = district_temps[:10]
@@ -89,17 +106,39 @@ def get_coolest_districts(request):
         for district in coolest_districts:
             district.pop("average_temp")
 
-        return Response({"data": coolest_districts}, status=status.HTTP_200_OK)
+        cache.set("coolest_districts", coolest_districts, timeout=60 * 5)
+
+        return {"data": coolest_districts}
     except Exception as ex:
         logger.error(f"Unexpected error: {ex}")
+        raise ex
+
+
+@api_view(["GET"])
+def get_coolest_districts(request):
+    try:
+        response_data = async_to_sync(get_coolest_districts_async)()
+        return Response(response_data, status=status.HTTP_200_OK)
+    except Exception as ex:
         return Response(
             {"error": "An unexpected error occurred. Please try again later."},
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
 
-@api_view(["GET"])
-def compare_temperatures(request):
+def get_temperature_at_2pm_of_a_day(weather_data, travel_date):
+    try:
+        hourly_temps = weather_data["hourly"]["temperature_2m"]
+        timestamps = weather_data["hourly"]["time"]
+        for i, timestamp in enumerate(timestamps):
+            if travel_date.strftime("%Y-%m-%d") in timestamp and "14:00" in timestamp:
+                return hourly_temps[i]
+    except KeyError as e:
+        logger.error(f"Missing expected key in weather data: {e}")
+    return None
+
+
+async def compare_temperatures_async(request):
     friend_location = request.GET.get("friend_location")
     destination_name = request.GET.get("destination")
     date_str = request.GET.get("date")
@@ -118,8 +157,8 @@ def compare_temperatures(request):
         )
 
     try:
-        origin = District.objects.get(name=friend_location)
-        destination = District.objects.get(name=destination_name)
+        origin = await sync_to_async(District.objects.get)(name=friend_location)
+        destination = await sync_to_async(District.objects.get)(name=destination_name)
     except ObjectDoesNotExist:
         return Response(
             {"error": "Invalid origin or destination"},
@@ -127,8 +166,11 @@ def compare_temperatures(request):
         )
 
     try:
-        origin_weather = fetch_weather_forecast(origin.lat, origin.lon)
-        destination_weather = fetch_weather_forecast(destination.lat, destination.lon)
+        async with aiohttp.ClientSession() as session:
+            origin_weather, destination_weather = await asyncio.gather(
+                fetch_weather_forecast(session, origin.lat, origin.lon),
+                fetch_weather_forecast(session, destination.lat, destination.lon),
+            )
     except Exception as ex:
         logger.error(f"Failed to fetch weather data: {ex}")
         return Response(
@@ -136,25 +178,8 @@ def compare_temperatures(request):
             status=status.HTTP_500_INTERNAL_SERVER_ERROR,
         )
 
-    origin_temp = next(
-        (
-            temp
-            for i, temp in enumerate(origin_weather["hourly"]["temperature_2m"])
-            if travel_date.strftime("%Y-%m-%d") in origin_weather["hourly"]["time"][i]
-            and "14:00" in origin_weather["hourly"]["time"][i]
-        ),
-        None,
-    )
-    destination_temp = next(
-        (
-            temp
-            for i, temp in enumerate(destination_weather["hourly"]["temperature_2m"])
-            if travel_date.strftime("%Y-%m-%d")
-            in destination_weather["hourly"]["time"][i]
-            and "14:00" in destination_weather["hourly"]["time"][i]
-        ),
-        None,
-    )
+    origin_temp = get_temperature_at_2pm_of_a_day(origin_weather, travel_date)
+    destination_temp = get_temperature_at_2pm_of_a_day(destination_weather, travel_date)
 
     if origin_temp is None or destination_temp is None:
         return Response(
@@ -165,7 +190,7 @@ def compare_temperatures(request):
     decision = (
         "Yes, it is cooler!. You can go"
         if destination_temp < origin_temp
-        else "No, it is not cooler. You should no travel"
+        else "No, it is not cooler. You should not travel"
     )
     return Response(
         {
@@ -175,3 +200,8 @@ def compare_temperatures(request):
         },
         status=status.HTTP_200_OK,
     )
+
+
+@api_view(["GET"])
+def compare_temperatures(request):
+    return async_to_sync(compare_temperatures_async)(request)

@@ -8,7 +8,7 @@ select =
     W2 #Whitespace warning
     W6 #Deprecation warning
     N8
-ignore = E800, F401
+ignore = E800, F401, F841
 max-line-length = 170
 max-complexity = 18
 exclude = .git,__pycache__,venv/,migrations/
