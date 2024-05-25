@@ -5,5 +5,19 @@ services:
     ports:
       - 8000:8000
     restart: on-failure
+    env_file:
+      - ./.env.dev
     volumes:
       - .:/app
+  pg_db:
+    image: postgres:13.0-alpine
+    ports:
+      - 4002:5432
+    volumes:
+      - postgres_data_dev:/var/lib/postgresql/data/
+    env_file:
+      - ./.env.dev.db
+    restart: "on-failure"
+
+volumes:
+  postgres_data_dev:
